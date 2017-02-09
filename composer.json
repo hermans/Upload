@@ -1,5 +1,5 @@
 {
-    "name": "codeguy/upload",
+    "name": "hermans/upload",
     "type": "library",
     "description": "Handle file uploads with extensible validation and storage strategies",
     "keywords": ["upload", "validation", "file"],
