@@ -10,6 +10,11 @@
             "name": "Josh Lockhart",
             "email": "info@joshlockhart.com",
             "homepage": "https://github.com/codeguy/"
+        },
+        {
+            "name": "Yusuf Hermanto",
+            "email": "ysf.hermanto@gmail.com",
+            "homepage": "http://github.com/hermans/Upload"
         }
     ],
     "require": {
@@ -21,5 +26,6 @@
     },
     "autoload": {
         "psr-4": { "Upload\\": "src/Upload" }
+        
     }
 }
