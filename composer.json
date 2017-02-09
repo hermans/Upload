@@ -21,7 +21,6 @@
     {
           "source": {
               "url": "http://github.com/hermans/Upload",
-              "type": "git",
             }
         }
     },
