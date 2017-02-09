@@ -17,13 +17,6 @@
             "homepage": "http://github.com/hermans/Upload"
         }
     ],
-    "repositories": [
-    {
-          "source": {
-              "url": "http://github.com/hermans/Upload",
-            }
-        }
-    },
     "require": {
         "php": ">=5.3.0",
         "ext-fileinfo": "*"
