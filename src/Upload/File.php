@@ -5,7 +5,7 @@
  * @author      Josh Lockhart <info@joshlockhart.com>
  * @copyright   2012 Josh Lockhart
  * @link        http://www.joshlockhart.com
- * @version     2.0.0
+ * @version     1.0.0
  *
  * MIT LICENSE
  *
@@ -42,8 +42,12 @@ namespace Upload;
  * @since   1.0.0
  * @package Upload
  */
-class File implements \ArrayAccess, \IteratorAggregate, \Countable
+class File extends \SplFileInfo
 {
+    /********************************************************************************
+    * Static Properties
+    *******************************************************************************/
+
     /**
      * Upload error code messages
      * @var array
@@ -59,232 +63,214 @@ class File implements \ArrayAccess, \IteratorAggregate, \Countable
     );
 
     /**
+     * Lookup hash to convert file units to bytes
+     * @var array
+     */
+    protected static $units = array(
+        'b' => 1,
+        'k' => 1024,
+        'm' => 1048576,
+        'g' => 1073741824
+    );
+
+    /********************************************************************************
+    * Instance Properties
+    *******************************************************************************/
+
+    /**
      * Storage delegate
-     * @var \Upload\StorageInterface
+     * @var \Upload\Storage\Base
      */
     protected $storage;
 
     /**
-     * File information
-     * @var array[\Upload\FileInfoInterface]
-     */
-    protected $objects = array();
-
-    /**
      * Validations
-     * @var array[\Upload\ValidationInterface]
+     * @var array[\Upload\Validation\Base]
      */
-    protected $validations = array();
+    protected $validations;
 
     /**
      * Validation errors
-     * @var array[String]
+     * @var array
      */
-    protected $errors = array();
+    protected $errors;
 
     /**
-     * Before validation callback
-     * @var callable
+     * Original file name provided by client (for internal use only)
+     * @var string
      */
-    protected $beforeValidationCallback;
+    protected $originalName;
 
     /**
-     * After validation callback
-     * @var callable
+     * File name (without extension)
+     * @var string
      */
-    protected $afterValidationCallback;
+    protected $name;
 
     /**
-     * Before upload callback
-     * @var callable
+     * File extension (without leading dot)
+     * @var string
      */
-    protected $beforeUploadCallback;
+    protected $extension;
 
     /**
-     * After upload callback
-     * @var callable
+     * File mimetype (e.g. "image/png")
+     * @var string
      */
-    protected $afterUploadCallback;
+    protected $mimetype;
+
+    /**
+     * Upload error code (for internal use only)
+     * @var  int
+     * @link http://www.php.net/manual/en/features.file-upload.errors.php
+     */
+    protected $errorCode;
 
     /**
      * Constructor
-     *
-     * @param  string                    $key     The $_FILES[] key
-     * @param  \Upload\StorageInterface  $storage The upload delegate instance
-     * @throws \RuntimeException                  If file uploads are disabled in the php.ini file
-     * @throws \InvalidArgumentException          If $_FILES[] does not contain key
+     * @param  string                            $key            The file's key in $_FILES superglobal
+     * @param  \Upload\Storage\Base              $storage        The method with which to store file
+     * @throws \Upload\Exception\UploadException If file uploads are disabled in the php.ini file
+     * @throws \InvalidArgumentException         If $_FILES key does not exist
      */
-    public function __construct($key, \Upload\StorageInterface $storage)
+    public function __construct($key, \Upload\Storage\Base $storage)
     {
-        // Check if file uploads are allowed
-        if (ini_get('file_uploads') == false) {
-            throw new \RuntimeException('File uploads are disabled in your PHP.ini file');
+        if (!isset($_FILES[$key])) {
+            throw new \InvalidArgumentException("Cannot find uploaded file identified by key: $key");
         }
-
-        // Check if key exists
-        if (isset($_FILES[$key]) === false) {
-            throw new \InvalidArgumentException("Cannot find uploaded file(s) identified by key: $key");
-        }
-
-        // Collect file info
-        if (is_array($_FILES[$key]['tmp_name']) === true) {
-            foreach ($_FILES[$key]['tmp_name'] as $index => $tmpName) {
-                if ($_FILES[$key]['error'][$index] !== UPLOAD_ERR_OK) {
-                    $this->errors[] = sprintf(
-                        '%s: %s',
-                        $_FILES[$key]['name'][$index],
-                        static::$errorCodeMessages[$_FILES[$key]['error'][$index]]
-                    );
-                    continue;
-                }
-
-                $this->objects[] = \Upload\FileInfo::createFromFactory(
-                    $_FILES[$key]['tmp_name'][$index],
-                    $_FILES[$key]['name'][$index]
-                );
-            }
-        } else {
-            if ($_FILES[$key]['error'] !== UPLOAD_ERR_OK) {
-                $this->errors[] = sprintf(
-                    '%s: %s',
-                    $_FILES[$key]['name'],
-                    static::$errorCodeMessages[$_FILES[$key]['error']]
-                );
-            }
-
-            $this->objects[] = \Upload\FileInfo::createFromFactory(
-                $_FILES[$key]['tmp_name'],
-                $_FILES[$key]['name']
-            );
-        }
-
         $this->storage = $storage;
+        $this->validations = array();
+        $this->errors = array();
+        $this->originalName = $_FILES[$key]['name'];
+        $this->errorCode = $_FILES[$key]['error'];
+        parent::__construct($_FILES[$key]['tmp_name']);
     }
 
-    /********************************************************************************
-     * Callbacks
-     *******************************************************************************/
+    /**
+     * Get name
+     * @return string
+     */
+    public function getName()
+    {
+        if (!isset($this->name)) {
+            $this->name = pathinfo($this->originalName, PATHINFO_FILENAME);
+        }
+
+        return $this->name;
+    }
 
     /**
-     * Set `beforeValidation` callable
-     *
-     * @param  callable                  $callable Should accept one `\Upload\FileInfoInterface` argument
-     * @return \Upload\File                        Self
-     * @throws \InvalidArgumentException           If argument is not a Closure or invokable object
+     * Set name (without extension)
+     * @param  string           $name
+     * @return \Upload\File     Self
      */
-    public function beforeValidate($callable)
+    public function setName($name)
     {
-        if (is_object($callable) === false || method_exists($callable, '__invoke') === false) {
-            throw new \InvalidArgumentException('Callback is not a Closure or invokable object.');
-        }
-        $this->beforeValidation = $callable;
+        $this->name = $name;
 
         return $this;
     }
 
     /**
-     * Set `afterValidation` callable
-     *
-     * @param  callable                  $callable Should accept one `\Upload\FileInfoInterface` argument
-     * @return \Upload\File                        Self
-     * @throws \InvalidArgumentException           If argument is not a Closure or invokable object
+     * Get file name with extension
+     * @return string
      */
-    public function afterValidate($callable)
+    public function getNameWithExtension()
     {
-        if (is_object($callable) === false || method_exists($callable, '__invoke') === false) {
-            throw new \InvalidArgumentException('Callback is not a Closure or invokable object.');
-        }
-        $this->afterValidation = $callable;
-
-        return $this;
+        return sprintf('%s.%s', $this->getName(), $this->getExtension());
     }
 
     /**
-     * Set `beforeUpload` callable
-     *
-     * @param  callable                  $callable Should accept one `\Upload\FileInfoInterface` argument
-     * @return \Upload\File                        Self
-     * @throws \InvalidArgumentException           If argument is not a Closure or invokable object
+     * Get file extension (without leading dot)
+     * @return string
      */
-    public function beforeUpload($callable)
+    public function getExtension()
     {
-        if (is_object($callable) === false || method_exists($callable, '__invoke') === false) {
-            throw new \InvalidArgumentException('Callback is not a Closure or invokable object.');
+        if (!isset($this->extension)) {
+            $this->extension = strtolower(pathinfo($this->originalName, PATHINFO_EXTENSION));
         }
-        $this->beforeUpload = $callable;
 
-        return $this;
+        return $this->extension;
     }
 
     /**
-     * Set `afterUpload` callable
-     *
-     * @param  callable                  $callable Should accept one `\Upload\FileInfoInterface` argument
-     * @return \Upload\File                        Self
-     * @throws \InvalidArgumentException           If argument is not a Closure or invokable object
+     * Get mimetype
+     * @return string
      */
-    public function afterUpload($callable)
+    public function getMimetype()
     {
-        if (is_object($callable) === false || method_exists($callable, '__invoke') === false) {
-            throw new \InvalidArgumentException('Callback is not a Closure or invokable object.');
-        }
-        $this->afterUpload = $callable;
-
-        return $this;
-    }
-
-    /**
-     * Apply callable
-     *
-     * @param  string                    $callbackName
-     * @param  \Upload\FileInfoInterface $file
-     * @return \Upload\File              Self
-     */
-    protected function applyCallback($callbackName, \Upload\FileInfoInterface $file)
-    {
-        if (in_array($callbackName, array('beforeValidation', 'afterValidation', 'beforeUpload', 'afterUpload')) === true) {
-            if (isset($this->$callbackName) === true) {
-                call_user_func_array($this->$callbackName, array($file));
+        if (!isset($this->mimeType)) {
+            
+            try{
+                $finfo = new \finfo(FILEINFO_MIME);
+                $mimetype = $finfo->file($this->getPathname());
+                $mimetypeParts = preg_split('/\s*[;,]\s*/', $mimetype);
+                $this->mimetype = strtolower($mimetypeParts[0]);
+                unset($finfo);
+            } catch (Exception $ex) {
+                $this->mimetype = $this->detectFileMimeType($this->getPathname());
             }
+            
         }
+
+        return $this->mimetype;
+    }
+
+    function detectFileMimeType($filename='')
+    {
+            $filename = escapeshellcmd($filename);
+            $command = "file -b --mime-type -m /usr/share/misc/magic {$filename}";
+
+            $mimeType = shell_exec($command);
+
+            return trim($mimeType);
+    }
+
+    /**
+     * Get md5
+     * @return string
+     */
+    public function getMd5()
+    {
+        return md5_file($this->getPathname());
+    }
+
+    /**
+     * Get image dimensions
+     * @return array formatted array of dimensions
+     */
+    public function getDimensions()
+    {
+        list($width, $height) = getimagesize($this->getPathname());
+        return array(
+            'width' => $width,
+            'height' => $height
+        );
     }
 
     /********************************************************************************
-     * Validation and Error Handling
-     *******************************************************************************/
+    * Validate
+    *******************************************************************************/
 
     /**
      * Add file validations
-     *
-     * @param  array[\Upload\ValidationInterface] $validations
-     * @return \Upload\File                       Self
+     * @param \Upload\Validation\Base|array[\Upload\Validation\Base] $validations
      */
-    public function addValidations(array $validations)
+    public function addValidations($validations)
     {
-        foreach ($validations as $validation) {
-            $this->addValidation($validation);
+        if (!is_array($validations)) {
+            $validations = array($validations);
         }
-
-        return $this;
-    }
-
-    /**
-     * Add file validation
-     *
-     * @param  \Upload\ValidationInterface $validation
-     * @return \Upload\File                Self
-     */
-    public function addValidation(\Upload\ValidationInterface $validation)
-    {
-        $this->validations[] = $validation;
-
-        return $this;
+        foreach ($validations as $validation) {
+            if ($validation instanceof \Upload\Validation\Base) {
+                $this->validations[] = $validation;
+            }
+        }
     }
 
     /**
      * Get file validations
-     *
-     * @return array[\Upload\ValidationInterface]
+     * @return array[\Upload\Validation\Base]
      */
     public function getValidations()
     {
@@ -292,41 +278,26 @@ class File implements \ArrayAccess, \IteratorAggregate, \Countable
     }
 
     /**
-     * Is this collection valid and without errors?
-     *
-     * @return bool
+     * Validate file
+     * @return bool True if valid, false if invalid
      */
-    public function isValid()
+    public function validate()
     {
-        foreach ($this->objects as $fileInfo) {
-            // Before validation callback
-            $this->applyCallback('beforeValidation', $fileInfo);
+        // Validate is uploaded OK
+        if ($this->isOk() === false) {
+            $this->errors[] = self::$errorCodeMessages[$this->errorCode];
+        }
 
-            // Check is uploaded file
-            if ($fileInfo->isUploadedFile() === false) {
-                $this->errors[] = sprintf(
-                    '%s: %s',
-                    $fileInfo->getNameWithExtension(),
-                    'Is not an uploaded file'
-                );
-                continue;
+        // Validate is uploaded file
+        if ($this->isUploadedFile() === false) {
+            $this->errors[] = 'The uploaded file was not sent with a POST request';
+        }
+
+        // User validations
+        foreach ($this->validations as $validation) {
+            if ($validation->validate($this) === false) {
+                $this->errors[] = $validation->getMessage();
             }
-
-            // Apply user validations
-            foreach ($this->validations as $validation) {
-                try {
-                    $validation->validate($fileInfo);
-                } catch (\Upload\Exception $e) {
-                    $this->errors[] = sprintf(
-                        '%s: %s',
-                        $fileInfo->getNameWithExtension(),
-                        $e->getMessage()
-                    );
-                }
-            }
-
-            // After validation callback
-            $this->applyCallback('afterValidation', $fileInfo);
         }
 
         return empty($this->errors);
@@ -334,7 +305,6 @@ class File implements \ArrayAccess, \IteratorAggregate, \Countable
 
     /**
      * Get file validation errors
-     *
      * @return array[String]
      */
     public function getErrors()
@@ -342,27 +312,16 @@ class File implements \ArrayAccess, \IteratorAggregate, \Countable
         return $this->errors;
     }
 
-    /********************************************************************************
-     * Helper Methods
-     *******************************************************************************/
-
-    public function __call($name, $arguments)
+    /**
+     * Add file validation error
+     * @param  string
+     * @return \Upload\File Self
+     */
+    public function addError($error)
     {
-        $count = count($this->objects);
-        $result = null;
+        $this->errors[] = $error;
 
-        if ($count) {
-            if ($count > 1) {
-                $result = array();
-                foreach ($this->objects as $object) {
-                    $result[] = call_user_func_array(array($object, $name), $arguments);
-                }
-            } else {
-                $result = call_user_func_array(array($this->objects[0], $name), $arguments);
-            }
-        }
-
-        return $result;
+        return $this;
     }
 
     /********************************************************************************
@@ -371,66 +330,22 @@ class File implements \ArrayAccess, \IteratorAggregate, \Countable
 
     /**
      * Upload file (delegated to storage object)
-     *
+     * @param  string $newName Give the file it a new name
      * @return bool
-     * @throws \Upload\Exception If validation fails
-     * @throws \Upload\Exception If upload fails
+     * @throws \Upload\Exception\UploadException If file does not validate
      */
-    public function upload()
+    public function upload($newName = null)
     {
-        if ($this->isValid() === false) {
-            throw new \Upload\Exception('File validation failed');
+        if ($this->validate() === false) {
+            throw new \Upload\Exception\UploadException('File validation failed');
         }
 
-        foreach ($this->objects as $fileInfo) {
-            $this->applyCallback('beforeUpload', $fileInfo);
-            $this->storage->upload($fileInfo);
-            $this->applyCallback('afterUpload', $fileInfo);
+        // Update the name, leaving out the extension
+        if (is_string($newName)) {
+            $this->name = pathinfo($newName, PATHINFO_FILENAME);
         }
 
-        return true;
-    }
-
-    /********************************************************************************
-     * Array Access Interface
-     *******************************************************************************/
-
-    public function offsetExists($offset)
-    {
-        return isset($this->objects[$offset]);
-    }
-
-    public function offsetGet($offset)
-    {
-        return isset($this->objects[$offset]) ? $this->objects[$offset] : null;
-    }
-
-    public function offsetSet($offset, $value)
-    {
-        $this->objects[$offset] = $value;
-    }
-
-    public function offsetUnset($offset)
-    {
-        unset($this->objects[$offset]);
-    }
-
-    /********************************************************************************
-     * Iterator Aggregate Interface
-     *******************************************************************************/
-
-    public function getIterator()
-    {
-        return new \ArrayIterator($this->objects);
-    }
-
-    /********************************************************************************
-     * Countable Interface
-     *******************************************************************************/
-
-    public function count()
-    {
-        return count($this->objects);
+        return $this->storage->upload($this, $newName);
     }
 
     /********************************************************************************
@@ -438,23 +353,43 @@ class File implements \ArrayAccess, \IteratorAggregate, \Countable
     *******************************************************************************/
 
     /**
-     * Convert human readable file size (e.g. "10K" or "3M") into bytes
+     * Is this file uploaded with a POST request?
      *
+     * This is a separate method so that it can be stubbed in unit tests to avoid
+     * the hard dependency on the `is_uploaded_file` function.
+     *
+     * @return  bool
+     */
+    public function isUploadedFile()
+    {
+        return is_uploaded_file($this->getPathname());
+    }
+
+    /**
+     * Is this file OK?
+     *
+     * This method inspects the upload error code to see if the upload was
+     * successful or if it failed for a variety of reasons.
+     *
+     * @link    http://www.php.net/manual/en/features.file-upload.errors.php
+     * @return  bool
+     */
+    public function isOk()
+    {
+        return ($this->errorCode === UPLOAD_ERR_OK);
+    }
+
+    /**
+     * Convert human readable file size (e.g. "10K" or "3M") into bytes
      * @param  string $input
      * @return int
      */
     public static function humanReadableToBytes($input)
     {
         $number = (int)$input;
-        $units = array(
-            'b' => 1,
-            'k' => 1024,
-            'm' => 1048576,
-            'g' => 1073741824
-        );
         $unit = strtolower(substr($input, -1));
-        if (isset($units[$unit])) {
-            $number = $number * $units[$unit];
+        if (isset(self::$units[$unit])) {
+            $number = $number * self::$units[$unit];
         }
 
         return $number;
