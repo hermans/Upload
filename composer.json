@@ -3,7 +3,7 @@
     "type": "library",
     "description": "Handle file uploads with extensible validation and storage strategies",
     "keywords": ["upload", "validation", "file"],
-    "homepage": "http://github.com/codeguy/Upload",
+    "homepage": "http://github.com/hermans/Upload",
     "license": "MIT",
     "authors": [
         {
